@@ -1,0 +1,145 @@
+RuinForge Files Summary - Mon Feb 24 08:16:15 PM CST 2025
+===========================
+
+Root Files:
+-rw-rw-r-- 1 peter peter    0 Feb 22 16:29 LICENSE
+-rw-rw-rw- 1 peter peter 1324 Feb 24 19:06 project.godot
+-rw-rw-r-- 1 peter peter    0 Feb 22 16:29 README.md
+
+Scenes (*.tscn):
+File: scenes/Player.tscn
+Contents preview (first 5 lines):
+[gd_scene load_steps=3 format=3 uid="uid://wbh0d52kxv7l"]
+
+[ext_resource type="Script" path="res://scripts/entities/Player.gd" id="1_s0gil"]
+
+[sub_resource type="CapsuleShape3D" id="CapsuleShape3D_1svgg"]
+------------------------
+File: scenes/World.tscn
+Contents preview (first 5 lines):
+[gd_scene load_steps=7 format=3 uid="uid://dnhwpg8753uw1"]
+
+[ext_resource type="PackedScene" uid="uid://wbh0d52kxv7l" path="res://scenes/Player.tscn" id="1_ubkn4"]
+[ext_resource type="Shader" path="res://unlit_shader.gdshader" id="2_3ynoa"]
+[ext_resource type="Script" path="res://scripts/core/LightManager.gd" id="2_ocqm5"]
+------------------------
+File: scenes/Bullet.tscn
+Contents preview (first 5 lines):
+[gd_scene load_steps=4 format=3 uid="uid://dboqbhwbm47oy"]
+
+[ext_resource type="Script" path="res://scripts/entities/Bullet.gd" id="1_tobmn"]
+
+[sub_resource type="SphereMesh" id="SphereMesh_ku5om"]
+------------------------
+
+Scripts (*.gd):
+File: scripts/core/LightManager.gd
+Contents:
+extends Node3D
+class_name LightManager
+
+@onready var mesh_node = get_parent().get_node("Ground/MeshInstance3D")  # Updated path
+@onready var material = mesh_node.mesh.surface_get_material(0) if mesh_node else null
+var light_map = Image.create(100, 100, false, Image.FORMAT_RF)
+var light_pos = Vector2i(50, 50)
+var light_range = 30
+
+func _ready():
+	if not mesh_node or not material:
+		push_error("MeshInstance3D or material not found at ../Ground/MeshInstance3D! Check scene.")
+		return
+	generate_light_map()
+	var tex = ImageTexture.create_from_image(light_map)
+	material.set_shader_parameter("light_map", tex)
+
+func generate_light_map():
+	for y in range(100):
+		for x in range(100):
+			var dist = Vector2(x, y).distance_to(light_pos)
+			var intensity = clamp(1.0 - (dist / light_range), 0.0, 1.0)
+			light_map.set_pixel(x, y, Color(intensity, 0, 0, 1))
+------------------------
+File: scripts/entities/Player.gd
+Contents:
+extends CharacterBody3D
+class_name RuinForgePlayer
+
+@export var speed := 6.0
+@export var jump_velocity := 4.5
+@export var mouse_sensitivity := 0.002
+@export var vr_mode := false  # Toggle VR support
+@onready var camera: Camera3D = $Camera3D
+@onready var xr_camera: XRCamera3D = $XRCamera3D
+@onready var gun_pivot: Node3D = $GunPivot
+var gravity: float = ProjectSettings.get_setting("physics/3d/default_gravity")
+var last_shot := 0.0
+var fire_rate := 0.2
+
+func _ready():
+	if vr_mode and XRServer.primary_interface:
+		get_viewport().use_xr = true
+		camera.visible = false
+		xr_camera.visible = true
+	else:
+		Input.mouse_mode = Input.MOUSE_MODE_CAPTURED
+		camera.visible = true
+		xr_camera.visible = false
+	# Placeholder gun visualization
+	var gun_mesh := MeshInstance3D.new()
+	gun_mesh.mesh = CapsuleMesh.new()
+	gun_mesh.scale = Vector3(0.1, 0.1, 0.3)
+	gun_mesh.position = Vector3(0.3, -0.2, -0.5)  # Offset for right-hand view
+	gun_pivot.add_child(gun_mesh)
+
+func _physics_process(delta: float):
+	# Apply gravity
+	if not is_on_floor():
+		velocity.y -= gravity * delta
+	
+	# Jump
+	if Input.is_action_just_pressed("jump") and is_on_floor():
+		velocity.y = jump_velocity
+	
+	# Movement
+	var input_dir := Vector2(Input.get_axis("ui_left", "ui_right"), Input.get_axis("ui_up", "ui_down")).normalized()
+	var direction := (transform.basis * Vector3(input_dir.x, 0, input_dir.y)).normalized()
+	velocity.x = direction.x * speed
+	velocity.z = direction.z * speed
+	move_and_slide()
+	
+	# Shooting
+	if Input.is_action_pressed("shoot") and (Time.get_ticks_msec() - last_shot) > (fire_rate * 1000):
+		shoot()
+
+func _input(event: InputEvent):
+	if vr_mode or not event is InputEventMouseMotion:
+		return
+	rotate_y(-event.relative.x * mouse_sensitivity)
+	camera.rotate_x(-event.relative.y * mouse_sensitivity)
+	camera.rotation.x = clamp(camera.rotation.x, -PI/2, PI/2)
+
+func shoot():
+	last_shot = Time.get_ticks_msec()
+	var bullet := preload("res://scenes/Bullet.tscn").instantiate() as CharacterBody3D
+	bullet.position = gun_pivot.global_position
+	bullet.velocity = -gun_pivot.global_transform.basis.z * 20.0
+	get_parent().add_child(bullet)
+------------------------
+File: scripts/entities/Bullet.gd
+Contents:
+extends CharacterBody3D
+class_name RuinForgeBullet
+
+var lifetime := 3.0
+
+func _ready():
+	# Velocity will be set by Player.gd when instantiated
+	pass
+
+func _physics_process(delta: float):
+	velocity.y -= ProjectSettings.get_setting("physics/3d/default_gravity") * delta
+	move_and_collide(velocity * delta)
+	lifetime -= delta
+	if lifetime <= 0 or get_slide_collision_count() > 0:
+		queue_free()
+------------------------
